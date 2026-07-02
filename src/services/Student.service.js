@@ -33,16 +33,26 @@ const getAllStudent = async ({
   const classMatch = schoolYear ? { schoolYear } : undefined;
 
   // 📋 Lấy danh sách học sinh
-  const students = await Student.find(Object.keys(filter).length ? filter : {})
+  const isClassQuery = Boolean(classId);
+  let studentQuery = Student.find(Object.keys(filter).length ? filter : {})
     .skip(queryOffset)
     .limit(queryLimit)
     .populate({
       path: "currentClass",
       match: classMatch, // chỉ thêm khi có schoolYear
       select: ["timetable", "className", "schoolYear"],
+    });
+
+  // Khi lọc theo lớp (nhập điểm/hạnh kiểm), không cần tải toàn bộ scores/history
+  if (!isClassQuery) {
+    studentQuery = studentQuery.populate("studyHistory").populate("scores");
+  }
+
+  const students = await studentQuery
+    .populate({
+      path: "conducts.conduct",
+      select: "name displayName semester status",
     })
-    .populate("studyHistory")
-    .populate("scores")
     .lean();
 
   // ⚙️ Nếu có filter theo năm học → loại bỏ học sinh không khớp
@@ -794,12 +804,15 @@ const addScoreColumnForStudent = async (studentId, subjectId, scoreTypeId) => {
 
     await student.save();
 
+    const newScore = student.scores[student.scores.length - 1];
+
     const updatedStudent = await Student.findById(studentId)
       .populate("scores.subjectId", "subjectName")
       .populate("scores.scoreTypeId", "name displayName");
 
     return {
       message: "Thêm cột điểm thành công",
+      scoreId: newScore._id.toString(),
       student: updatedStudent,
     };
   } catch (error) {
@@ -897,8 +910,11 @@ const addScoreColumnForAllStudentsInClass = async (
 
         await student.save();
 
+        const newScore = student.scores[student.scores.length - 1];
+
         results.push({
-          studentId: student._id,
+          studentId: student._id.toString(),
+          scoreId: newScore._id.toString(),
           studentCode: student.studentCode,
           fullName: student.fullName,
           success: true,
